@@ -18,17 +18,29 @@ def read_matrix_csv(csv_path):
         reader = csv.reader(file)
         header = next(reader)  # Get header
         
-        # Initialize matrices
+        # Initialize matrices and additional data
         model_matrix = None
         view_matrix = None
         projection_matrix = None
+        screen_aspect_ratio = None
         
         for row in reader:
-            if len(row) < 17:  # Need at least matrix_type + 16 values
-                print(f"Warning: Row has insufficient values: {row}")
+            if not row:  # Skip empty rows
                 continue
                 
             matrix_type = row[0].strip()
+            
+            if matrix_type == "screenAspectratio" and len(row) > 1:
+                try:
+                    screen_aspect_ratio = float(row[1])
+                    print(f"Screen aspect ratio: {screen_aspect_ratio}")
+                    continue
+                except ValueError:
+                    print(f"Warning: Could not parse aspect ratio {row[1]} as float")
+            
+            if len(row) < 17:  # Need at least matrix_type + 16 values for matrices
+                print(f"Warning: Row has insufficient values: {row}")
+                continue
             
             # Parse the 16 matrix values
             values = []
@@ -73,8 +85,10 @@ def read_matrix_csv(csv_path):
     return {
         "model_matrix": model_matrix_bl,
         "view_matrix": view_matrix_bl,
-        "projection_matrix": projection_matrix_bl
+        "projection_matrix": projection_matrix_bl,
+        "screen_aspect_ratio": screen_aspect_ratio
     }
+
 
 def fix_model_matrix(model_matrix):
     """Apply corrections to ARKit model matrix for Blender compatibility"""
@@ -294,12 +308,13 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     # Load and set specific background image dimensions
     try:
         bg_image = bpy.data.images.load(bg_path)
+        aspect_ratio = matrices["screen_aspect_ratio"]
         scene = bpy.context.scene
         
-        # Set specific resolution for portrait mode: 1179 x 2556
-        scene.render.resolution_x = 1179  # Width
-        scene.render.resolution_y = 2556  # Height
-        print(f"Setting specific portrait resolution: 1179x2556")
+        base_width = 1080
+        height = int(base_width / aspect_ratio)
+        scene.render.resolution_x = base_width
+        scene.render.resolution_y = height
         
         scene.render.resolution_percentage = 100
     except Exception as e:
