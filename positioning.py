@@ -355,7 +355,6 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
         
         # Apply the rotation to the current matrix
         obj.matrix_world = obj.matrix_world @ rotation
-        obj.scale *= 0.5 
         # plane = create_plane_with_matrix(matrices["model_matrix"], image_path, size=plane_size)
     except Exception as e:
         print(f"Error creating plane: {e}")
