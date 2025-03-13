@@ -5,6 +5,7 @@ import os
 import mathutils
 from mathutils import Matrix, Vector
 import traceback
+import math
 
 
 # Path configuration
@@ -179,7 +180,7 @@ def fix_camera_matrix(view_matrix):
         (0, 0, 0, 1)
     ))
     
-    fixed_camera = correction @ camera_matrix
+    fixed_camera = correction @ camera_matrix 
     
     # For persistent camera alignment issues, add specific adjustments
     # Example: rotate camera 180 degrees around Z axis
@@ -343,9 +344,18 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     origin.scale = Vector((0.2, 0.2, 0.2))
     origin.name = "WorldOrigin"
     
+    fixed_matrix = fix_model_matrix(matrices["model_matrix"])
+    
     # Create plane with model matrix
     try:
         obj = import_obj_at_origin(obj_path, scale_factor=1.0)
+        
+        obj.matrix_world = fixed_matrix
+        rotation = Matrix.Rotation(np.radians(-90), 4, 'X')
+        
+        # Apply the rotation to the current matrix
+        obj.matrix_world = obj.matrix_world @ rotation
+        obj.scale *= 0.5 
         plane = create_plane_with_matrix(matrices["model_matrix"], image_path, size=plane_size)
     except Exception as e:
         print(f"Error creating plane: {e}")
