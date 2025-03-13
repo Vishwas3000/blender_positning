@@ -77,6 +77,8 @@ def read_matrix_csv(csv_path):
         view_matrix = None
         projection_matrix = None
         screen_aspect_ratio = None
+        fov = None
+        sensor_height = None
         
         for row in reader:
             if not row:  # Skip empty rows
@@ -91,6 +93,24 @@ def read_matrix_csv(csv_path):
                     continue
                 except ValueError:
                     print(f"Warning: Could not parse aspect ratio {row[1]} as float")
+            
+            # Handle FOV row
+            if matrix_type == "fov" and len(row) > 1:
+                try:
+                    fov = float(row[1])
+                    print(f"Field of view: {fov} degrees")
+                    continue
+                except ValueError:
+                    print(f"Warning: Could not parse FOV {row[1]} as float")
+            
+            # Handle sensor height row
+            if matrix_type == "sensorHeight" and len(row) > 1:
+                try:
+                    sensor_height = float(row[1])
+                    print(f"Sensor height: {sensor_height} mm")
+                    continue
+                except ValueError:
+                    print(f"Warning: Could not parse sensor height {row[1]} as float")
             
             if len(row) < 17:  # Need at least matrix_type + 16 values for matrices
                 print(f"Warning: Row has insufficient values: {row}")
@@ -140,90 +160,45 @@ def read_matrix_csv(csv_path):
         "model_matrix": model_matrix_bl,
         "view_matrix": view_matrix_bl,
         "projection_matrix": projection_matrix_bl,
-        "screen_aspect_ratio": screen_aspect_ratio
+        "screen_aspect_ratio": screen_aspect_ratio,
+        "fov": fov,
+        "sensor_height": sensor_height
     }
-
-
-def fix_model_matrix(model_matrix):
-    """Apply corrections to ARKit model matrix for Blender compatibility"""
-    # Create a correction matrix for Blender
-    # Blender uses right-handed Z-up, ARKit uses right-handed Y-up
-    correction = Matrix((
-        (1, 0, 0, 0),
-        (0, 0, -1, 0),
-        (0, 1, 0, 0),
-        (0, 0, 0, 1)
-    ))
     
-    # Apply correction
-    fixed_matrix = correction @ model_matrix @ correction.inverted()
-    
-    # For persistent alignment issues, you can add specific rotations here
-#    rotation_fix = Matrix.Rotation(np.radians(180), 4, 'Z')
-#    fixed_matrix = fixed_matrix 
-    
-    print("\nCorrected Model Matrix:")
-    print(fixed_matrix)
-    
-    return fixed_matrix
-
-def fix_camera_matrix(view_matrix):
-    """Convert ARKit camera view matrix to Blender camera matrix"""
-    # Invert view matrix to get camera-to-world transform
-    camera_matrix = view_matrix.inverted()
-    
-    # Apply coordinate system correction
-    correction = Matrix((
-        (1, 0, 0, 0),
-        (0, 0, -1, 0),
-        (0, 1, 0, 0),
-        (0, 0, 0, 1)
-    ))
-    
-    fixed_camera = correction @ camera_matrix 
-    
-    # For persistent camera alignment issues, add specific adjustments
-    # Example: rotate camera 180 degrees around Z axis
-#    camera_rotation_fix = Matrix.Rotation(np.radians(180), 4, 'Z')
-#    fixed_camera = fixed_camera
-    
-#    local_y_rotation = Matrix.Rotation(np.radians(90), 4, 'Y')
-#    fixed_camera = fixed_camera @ local_y_rotation
-    
-    print("\nCorrected Camera Matrix:")
-    print(fixed_camera)
-    
-    return fixed_camera
-
-def setup_camera_from_matrices(view_matrix, projection_matrix):
+def setup_camera_from_matrices(view_matrix, projection_matrix, fov, senson_height):
     """Setup camera using view and projection matrices from ARKit"""
     # Create new camera
     bpy.ops.object.camera_add()
     camera = bpy.context.object
-    
-    # Fix camera matrix for Blender
-    camera_matrix = fix_camera_matrix(view_matrix)
-    
+        
+    fixed_camera_matrix = view_matrix
     # Set camera position and rotation
-    camera.matrix_world = camera_matrix
+    camera.matrix_world = fixed_camera_matrix.inverted()
     
     # Set camera projection parameters
     camera_data = camera.data
+    
+    print("check this")
+    print(fov)
+    print(senson_height)
     
     # Use projection matrix to set camera parameters
     # Extract field of view and aspect ratio
     if abs(projection_matrix[1][1]) > 0.0001:  # Avoid division by zero
         aspect_ratio = abs(projection_matrix[0][0] / projection_matrix[1][1])
-        tan_half_fov = 1.0 / abs(projection_matrix[1][1])
-        fov = 2 * np.arctan(tan_half_fov)
         
         # Convert FOV to focal length
-        focal_length = 37
         
         # Set camera parameters
-        camera_data.lens_unit = 'MILLIMETERS'
-        camera_data.lens = focal_length
+        camera_data.lens_unit = 'FOV'
+        camera_data.sensor_fit = 'VERTICAL'
+
+        # camera_data.lens = focal_length
+        camera_data.sensor_height = senson_height
         camera_data.sensor_width = camera_data.sensor_height * aspect_ratio
+        vertical_fov_degrees = fov
+        camera_data.angle_y = math.radians(vertical_fov_degrees)
+
     else:
         print("Warning: Could not extract FOV from projection matrix, using defaults")
     
@@ -248,83 +223,6 @@ def setup_camera_from_matrices(view_matrix, projection_matrix):
     
     return camera
 
-def create_plane_with_matrix(model_matrix, image_path, size=1.0):
-    """Create a plane, apply the model matrix, and set an image on the plane"""
-    # Create a plane
-    bpy.ops.mesh.primitive_plane_add(size=size, enter_editmode=False, align='WORLD')
-    plane = bpy.context.active_object
-    print(f"Created plane: {plane.name}")
-    
-    # Scale the plane by 2 in the Y direction
-    plane.scale[1] = 2.0
-    print(f"Scaled plane in Y direction by factor of 2")
-    
-    # Apply the scale to make it permanent
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    
-    # Get original dimensions before applying transforms
-    original_dimensions = plane.dimensions.copy()
-    print(f"Original dimensions after Y scaling: {original_dimensions}")
-    
-    # Create a new material
-    mat = bpy.data.materials.new(name="PlaneMaterial")
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    
-    # Clear default nodes
-    for node in nodes:
-        nodes.remove(node)
-    
-    # Add a Principled BSDF shader
-    bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
-    bsdf.location = (0, 0)
-    
-    # Add an Image Texture node
-    tex_image = nodes.new(type='ShaderNodeTexImage')
-    tex_image.location = (-300, 0)
-    
-    # Load the image
-    try:
-        image = bpy.data.images.load(image_path)
-        tex_image.image = image
-        print(f"Loaded image: {image_path}")
-    except Exception as e:
-        print(f"Error loading image: {e}")
-        return None
-    
-    # Add an Output node
-    output = nodes.new(type='ShaderNodeOutputMaterial')
-    output.location = (300, 0)
-    
-    # Link nodes
-    links = mat.node_tree.links
-    links.new(tex_image.outputs['Color'], bsdf.inputs['Base Color'])
-    links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
-    
-    # Assign the material to the plane
-    if plane.data.materials:
-        plane.data.materials[0] = mat
-    else:
-        plane.data.materials.append(mat)
-    
-    # Fix model matrix for ARKit to Blender conversion
-    fixed_matrix = fix_model_matrix(model_matrix)
-    
-    # Apply the fixed matrix
-    plane.matrix_world = fixed_matrix
-    
-    # Print transformed dimensions
-    print(f"Transformed dimensions: {plane.dimensions}")
-    
-    # Add coordinate axes to visualize the model's orientation
-    bpy.ops.object.empty_add(type='ARROWS', location=(0, 0, 0))
-    axes = bpy.context.object
-    axes.matrix_world = fixed_matrix
-    axes.scale = Vector((0.2, 0.2, 0.2))
-    axes.name = "PlaneAxes"
-    
-    return plane
-
 def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     """Setup the entire scene using ARKit matrices"""
     # Clear the scene
@@ -344,13 +242,13 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     origin.scale = Vector((0.2, 0.2, 0.2))
     origin.name = "WorldOrigin"
     
-    fixed_matrix = fix_model_matrix(matrices["model_matrix"])
-    
+    fixed_model_matrix = matrices["model_matrix"]
+        
     # Create plane with model matrix
     try:
         obj = import_obj_at_origin(obj_path, scale_factor=1.0)
         
-        obj.matrix_world = fixed_matrix
+        obj.matrix_world = fixed_model_matrix
         rotation = Matrix.Rotation(np.radians(-90), 4, 'X')
         
         # Apply the rotation to the current matrix
@@ -362,7 +260,7 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     
     # Setup camera
     try:
-        camera = setup_camera_from_matrices(matrices["view_matrix"], matrices["projection_matrix"])
+        camera = setup_camera_from_matrices(matrices["view_matrix"], matrices["projection_matrix"], matrices["fov"], matrices["sensor_height"])
     except Exception as e:
         print(f"Error setting up camera: {e}")
         return
@@ -437,39 +335,11 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
         print("Compositing setup complete for portrait mode with resolution 1179x2556")
     except Exception as e:
         print(f"Error setting up compositing: {e}")
-    
-    # # Setup lighting (add a simple environment light)
-    # world = bpy.context.scene.world
-    # world.use_nodes = True
-    # bg_node = world.node_tree.nodes.get("Background")
-    # if bg_node:
-    #     bg_node.inputs["Color"].default_value = (1, 1, 1, 1)  # White light
-    #     bg_node.inputs["Strength"].default_value = 1.0  # Moderate strength
-    
-    # # Setup render settings
-    # scene.render.filepath = render_path
-    # scene.render.image_settings.file_format = 'PNG'
-    
-    # # Use Cycles for better quality
-    # scene.render.engine = 'CYCLES'
-    # if scene.render.engine == 'CYCLES':
-    #     scene.cycles.samples = 32  # Lower for faster preview, increase for final render
-    
-    # # Render and save
-    # try:
-    #     bpy.ops.render.render(write_still=True)
-    #     print(f"Rendered image saved to: {render_path}")
-    # except Exception as e:
-    #     print(f"Error rendering: {e}")
-    
-    # Save .blend file
     try:
         bpy.ops.wm.save_as_mainfile(filepath=blend_path)
         print(f"Blender file saved to: {blend_path}")
     except Exception as e:
         print(f"Error saving blend file: {e}")
-
-def test_transforms():
     """Test function to verify matrix transformations"""
     print("\n=== Testing Matrix Transformations ===")
     
@@ -535,8 +405,6 @@ def validate_csv_format(csv_path):
 if __name__ == "__main__":
     print("\n=== Starting ARKit to Blender Conversion with Plane ===")
     
-    # Run transformation tests
-    test_transforms()
     # Validate CSV format
     if validate_csv_format(csv_path):
         print("CSV validation passed. Setting up scene...")
