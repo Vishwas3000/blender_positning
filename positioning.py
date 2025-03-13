@@ -1,17 +1,70 @@
 import bpy
 import csv
 import numpy as np
+import os
 import mathutils
 from mathutils import Matrix, Vector
+import traceback
+
 
 # Path configuration
 image_path = '/Users/sudeepsharma/Desktop/blender_positioning/src/image_target.png'
-obj_path = '/Users/sudeepsharma/Desktop/blender_positioning/src/mesh_folder/ModelExport.obj'
+obj_path = '/Users/sudeepsharma/Desktop/blender_positioning/src/mesh_folder/model.obj'
 csv_path = '/Users/sudeepsharma/Desktop/blender_positioning/src/IMG1.csv'
 background_path = '/Users/sudeepsharma/Desktop/blender_positioning/src/IMG1.png'
 output_image_path = "/Users/sudeepsharma/Desktop/blender_positioning/render_output.png"
 output_blend_path = '/Users/sudeepsharma/Desktop/blender_positioning/blend.blend'
 
+def import_obj_at_origin(obj_path, scale_factor=1.0):
+    """
+    Import an OBJ file and place it at the world origin (0,0,0).
+    """
+    if not os.path.exists(obj_path):
+        error_message = f"ERROR: OBJ file does not exist at path: {obj_path}"
+        print(error_message)
+        return None
+
+    # Deselect all objects
+    bpy.ops.object.select_all(action='DESELECT')
+    print("import obj called")
+    try:
+        # Use the correct import operator for Blender 4.3
+        bpy.ops.wm.obj_import(filepath=obj_path)
+        print(f"Imported OBJ: {obj_path}")
+
+        imported_objects = [obj for obj in bpy.context.selected_objects]
+        if not imported_objects:
+            warning_message = "WARNING: No objects were imported or selected"
+            print(warning_message)
+            return None
+
+        # Create a parent empty object
+        bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+        parent = bpy.context.object
+        parent.name = "OBJ_Parent"
+
+        # Parent all imported objects
+        for obj in imported_objects:
+            obj.parent = parent
+            obj.matrix_parent_inverse = parent.matrix_world.inverted()
+
+        # Apply scale
+        parent.scale = Vector((scale_factor, scale_factor, scale_factor))
+
+        # Add coordinate axes
+        bpy.ops.object.empty_add(type='ARROWS', location=(0, 0, 0))
+        axes = bpy.context.object
+        axes.scale = Vector((0.2, 0.2, 0.2))
+        axes.name = "OBJAxes"
+
+        return parent
+
+    except Exception as e:
+        error_message = f"Error importing OBJ: {str(e)}"
+        print(error_message)
+        print(traceback.format_exc())
+        return None
+     
 def read_matrix_csv(csv_path):
     """Read MVP matrices from CSV file exported from ARKit"""
     with open(csv_path, 'r') as file:
@@ -292,8 +345,8 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     
     # Create plane with model matrix
     try:
+        obj = import_obj_at_origin(obj_path, scale_factor=1.0)
         plane = create_plane_with_matrix(matrices["model_matrix"], image_path, size=plane_size)
-#        obj = place_model(matrices["model_matrix"], size=1.0)
     except Exception as e:
         print(f"Error creating plane: {e}")
         return
@@ -376,29 +429,29 @@ def setup_scene(bg_path, csv_path, blend_path, render_path, plane_size=1.0):
     except Exception as e:
         print(f"Error setting up compositing: {e}")
     
-    # Setup lighting (add a simple environment light)
-    world = bpy.context.scene.world
-    world.use_nodes = True
-    bg_node = world.node_tree.nodes.get("Background")
-    if bg_node:
-        bg_node.inputs["Color"].default_value = (1, 1, 1, 1)  # White light
-        bg_node.inputs["Strength"].default_value = 1.0  # Moderate strength
+    # # Setup lighting (add a simple environment light)
+    # world = bpy.context.scene.world
+    # world.use_nodes = True
+    # bg_node = world.node_tree.nodes.get("Background")
+    # if bg_node:
+    #     bg_node.inputs["Color"].default_value = (1, 1, 1, 1)  # White light
+    #     bg_node.inputs["Strength"].default_value = 1.0  # Moderate strength
     
-    # Setup render settings
-    scene.render.filepath = render_path
-    scene.render.image_settings.file_format = 'PNG'
+    # # Setup render settings
+    # scene.render.filepath = render_path
+    # scene.render.image_settings.file_format = 'PNG'
     
-    # Use Cycles for better quality
-    scene.render.engine = 'CYCLES'
-    if scene.render.engine == 'CYCLES':
-        scene.cycles.samples = 32  # Lower for faster preview, increase for final render
+    # # Use Cycles for better quality
+    # scene.render.engine = 'CYCLES'
+    # if scene.render.engine == 'CYCLES':
+    #     scene.cycles.samples = 32  # Lower for faster preview, increase for final render
     
-    # Render and save
-    try:
-        bpy.ops.render.render(write_still=True)
-        print(f"Rendered image saved to: {render_path}")
-    except Exception as e:
-        print(f"Error rendering: {e}")
+    # # Render and save
+    # try:
+    #     bpy.ops.render.render(write_still=True)
+    #     print(f"Rendered image saved to: {render_path}")
+    # except Exception as e:
+    #     print(f"Error rendering: {e}")
     
     # Save .blend file
     try:
@@ -475,7 +528,6 @@ if __name__ == "__main__":
     
     # Run transformation tests
     test_transforms()
-    
     # Validate CSV format
     if validate_csv_format(csv_path):
         print("CSV validation passed. Setting up scene...")
